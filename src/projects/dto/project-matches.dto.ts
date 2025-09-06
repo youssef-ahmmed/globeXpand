@@ -1,4 +1,4 @@
-import { IsOptional, IsNumber, IsIn, Min } from "class-validator";
+import { IsIn, IsNumber, IsOptional, Min } from "class-validator";
 
 export class RebuildProjectMatchesDto {}
 

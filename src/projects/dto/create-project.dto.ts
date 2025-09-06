@@ -1,12 +1,12 @@
 import {
-  IsString,
-  IsNotEmpty,
-  IsArray,
-  IsNumber,
-  Min,
-  IsOptional,
-  IsIn,
   ArrayNotEmpty,
+  IsArray,
+  IsIn,
+  IsNotEmpty,
+  IsNumber,
+  IsOptional,
+  IsString,
+  Min,
 } from "class-validator";
 
 export class CreateProjectDto {

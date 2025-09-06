@@ -1,11 +1,11 @@
 import {
-  IsString,
-  IsOptional,
-  IsArray,
   ArrayNotEmpty,
-  IsNumber,
-  Min,
+  IsArray,
   IsIn,
+  IsNumber,
+  IsOptional,
+  IsString,
+  Min,
 } from "class-validator";
 
 export class UpdateProjectDto {

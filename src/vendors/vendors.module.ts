@@ -5,9 +5,17 @@ import { VendorsController } from "./vendors.controller";
 import { Vendor } from "./entities/vendor.entity";
 import { VendorService } from "./entities/vendor-service.entity";
 import { VendorCountry } from "./entities/vendor-country.entity";
+import { VendorHealth } from "@/vendors/entities/vendor-health.entity";
 
 @Module({
-  imports: [TypeOrmModule.forFeature([Vendor, VendorService, VendorCountry])],
+  imports: [
+    TypeOrmModule.forFeature([
+      Vendor,
+      VendorService,
+      VendorCountry,
+      VendorHealth,
+    ]),
+  ],
   controllers: [VendorsController],
   providers: [VendorsService],
   exports: [VendorsService, TypeOrmModule],

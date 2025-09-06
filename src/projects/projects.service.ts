@@ -18,6 +18,8 @@ import { Match } from "@/matches/entities/match.entity";
 import { MailerService } from "@/common/services/mailer.service";
 import { Role } from "@/common/decorators/roles.decorator";
 import { PaginationMetaDto } from "@/common/dto/pagination.dto";
+import { NotificationsService } from "@/notifications/notifications.service";
+import { ConfigService } from "@nestjs/config";
 
 @Injectable()
 export class ProjectsService {
@@ -29,6 +31,8 @@ export class ProjectsService {
     @InjectRepository(Vendor) private vendorRepo: Repository<Vendor>,
     @InjectRepository(Match) private matchRepo: Repository<Match>,
     private mailerService: MailerService,
+    private configService: ConfigService,
+    private notificationsService: NotificationsService,
   ) {}
 
   async findAll(filter: FilterProjectDto, user: any) {
@@ -171,6 +175,22 @@ export class ProjectsService {
       select: ["id"],
     });
     return projects.map((p) => p.id);
+  }
+
+  async getActiveProjectIds(): Promise<number[]> {
+    const rows = await this.repo
+      .createQueryBuilder("p")
+      .select("p.id", "id")
+      .where("p.status = :status", { status: ProjectStatus.ACTIVE })
+      .getRawMany();
+    return rows.map((r) => Number(r.id));
+  }
+
+  async findAllActiveProjectsForScheduling(): Promise<Project[]> {
+    return this.repo.find({
+      where: { status: ProjectStatus.ACTIVE },
+      relations: ["services"], // we only need services if matching uses them
+    });
   }
 
   async getProjectMatches(
@@ -323,5 +343,147 @@ export class ProjectsService {
     } catch (err) {
       throw new InternalServerErrorException("Rebuild failed");
     }
+  }
+
+  async rebuildMatches(projectId: number, options?: { topN?: number }) {
+    const topN =
+      options?.topN ??
+      Number(this.configService.get("MATCHING_TOP_MATCHES_COUNT", 3));
+    // SLA threshold and weights from env (fallback to defaults)
+    const slaThresholdHours = Number(
+      this.configService.get("MATCHING_SLA_THRESHOLD_HOURS", 24),
+    ); // used if needed
+    const slaWeight = Number(this.configService.get("MATCHING_SLA_WEIGHT", 1));
+    const serviceWeight = Number(
+      this.configService.get("MATCHING_SERVICE_WEIGHT", 2),
+    );
+
+    // 1) load project with services & client
+    const project = await this.repo.findOne({
+      where: { id: projectId },
+      relations: ["services", "client"],
+    });
+    if (!project) throw new NotFoundException("Project not found");
+
+    // 2) find candidate vendors who support the project country and at least one service
+    // we'll use query builder to compute services_overlap
+    const candidates = await this.vendorRepo
+      .createQueryBuilder("v")
+      .select([
+        "v.id AS vendorId",
+        "v.name AS vendorName",
+        "v.rating AS rating",
+        "v.response_sla_hours AS responseSlaHours",
+        "COUNT(ps.service) AS servicesOverlap",
+      ])
+      .innerJoin("v.countries", "vc", "vc.country = :country", {
+        country: project.country,
+      })
+      .innerJoin("v.services", "vs", "vs.vendor_id = v.id")
+      .innerJoin(
+        "project_service",
+        "ps",
+        "ps.service = vs.service AND ps.project_id = :projectId",
+        { projectId },
+      )
+      .where("v.is_active = TRUE")
+      .groupBy("v.id, v.name, v.rating, v.response_sla_hours")
+      .getRawMany();
+
+    // Map existing matches for this project to detect creates vs updates
+    const existingMatches = await this.matchRepo.find({ where: { projectId } });
+    const existingMap = new Map<number, Match>();
+    for (const m of existingMatches) existingMap.set(m.vendorId, m);
+
+    const created: Match[] = [];
+    const updated: Match[] = [];
+
+    // 3) compute score for each candidate and upsert
+    for (const c of candidates) {
+      const vendorId = Number(c.vendorId);
+      const servicesOverlap = Number(c.servicesOverlap) || 0;
+      if (servicesOverlap <= 0) continue; // skip
+      const rating = Number(c.rating) || 0;
+      const responseSlaHours = Number(c.responseSlaHours) || 99999;
+      const slaBonus = responseSlaHours <= slaThresholdHours ? slaWeight : 0;
+
+      const score = servicesOverlap * serviceWeight + rating + slaBonus;
+
+      const existing = existingMap.get(vendorId);
+      if (existing) {
+        // if score changed, update
+        if (Number(existing.score) !== Number(score)) {
+          existing.score = Number(score.toFixed(2));
+          await this.matchRepo.save(existing);
+          updated.push(existing);
+        } else {
+          // update updatedAt timestamp
+          existing.updatedAt = new Date();
+          await this.matchRepo.save(existing);
+        }
+      } else {
+        // create new match
+        const newMatch = this.matchRepo.create({
+          projectId: project.id,
+          vendorId,
+          score: Number(score.toFixed(2)),
+        });
+        await this.matchRepo.save(newMatch);
+        created.push(newMatch);
+      }
+    }
+
+    const totalMatches = await this.matchRepo.count({ where: { projectId } });
+
+    // 4) pick top matches (by score)
+    const topMatchesRaw = await this.matchRepo
+      .createQueryBuilder("m")
+      .leftJoinAndSelect("m.vendor", "vendor")
+      .where("m.projectId = :projectId", { projectId })
+      .orderBy("m.score", "DESC")
+      .take(topN)
+      .getMany();
+
+    const topMatches = topMatchesRaw.map((m) => ({
+      vendorId: m.vendorId,
+      vendorName: m.vendor?.name,
+      score: Number(m.score),
+      servicesOverlap: null, // optional: computing matching services would need extra queries
+      isNew: created.some((c) => c.vendorId === m.vendorId),
+    }));
+
+    // 5) Notifications: send email to client for newly created matches only
+    let emailSent = false;
+    if (created.length > 0) {
+      try {
+        const clientEmail = project.client?.contactEmail;
+        if (clientEmail) {
+          // prepare top N new vendors to include in email
+          const newVendorDetails = created
+            .sort((a, b) => Number(b.score) - Number(a.score))
+            .slice(0, topN)
+            .map((m) => ({ vendorId: m.vendorId, score: m.score }));
+
+          // call notifications service (mock uses MailerService)
+          await this.notificationsService.sendNewMatchesEmail(
+            clientEmail,
+            project,
+            newVendorDetails,
+          );
+          emailSent = true;
+        }
+      } catch (err) {
+        // swallow, but log (you might integrate logger)
+        // console.error('Failed to send new matches email', err);
+      }
+    }
+
+    return {
+      created: created.length,
+      updated: updated.length,
+      totalMatches,
+      topMatches,
+      emailSent,
+    };
   }
 }
