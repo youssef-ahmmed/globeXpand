@@ -1,14 +1,14 @@
 import { NestFactory } from "@nestjs/core";
-import { AppModule } from "../../../app.module";
+import { AppModule } from "@/app.module";
 import { Repository } from "typeorm";
 import { getRepositoryToken } from "@nestjs/typeorm";
-import { Client } from "../../../clients/entities/client.entity";
-import { Project } from "../../../projects/entities/project.entity";
-import { ProjectService } from "../../../projects/entities/project-service.entity";
-import { Vendor } from "../../../vendors/entities/vendor.entity";
-import { VendorService } from "../../../vendors/entities/vendor-service.entity";
-import { VendorCountry } from "../../../vendors/entities/vendor-country.entity";
-import { Match } from "../../../matches/entities/match.entity";
+import { Client } from "@/clients/entities/client.entity";
+import { Project } from "@/projects/entities/project.entity";
+import { ProjectService } from "@/projects/entities/project-service.entity";
+import { Vendor } from "@/vendors/entities/vendor.entity";
+import { VendorService } from "@/vendors/entities/vendor-service.entity";
+import { VendorCountry } from "@/vendors/entities/vendor-country.entity";
+import { Match } from "@/matches/entities/match.entity";
 import * as bcrypt from "bcrypt";
 
 async function runSeeds() {
