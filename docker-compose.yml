@@ -5,18 +5,9 @@ services:
       dockerfile: Dockerfile
     container_name: globexpand-api
     ports:
-      - "3000:3000"
-    environment:
-      - PORT=3000
-      - MYSQL_HOST=mysql
-      - MYSQL_PORT=3306
-      - MYSQL_DATABASE=globexpand
-      - MYSQL_USERNAME=root
-      - MYSQL_PASSWORD=rootpassword
-      - MONGODB_URI=mongodb://mongo:27017/globexpand
-      - MAIL_HOST=maildev
-      - MAIL_PORT=1025
-      - JWT_SECRET=63dce59d4d599661bffdd5e88af7da364f630aacd2bcae3192ca7085928f6c3a
+      - "${PORT}:3000"
+    env_file:
+      - .env.docker
     depends_on:
       mysql:
         condition: service_healthy
@@ -30,11 +21,8 @@ services:
     image: mysql:8.0
     container_name: globexpand-mysql
     restart: always
-    environment:
-      MYSQL_ROOT_PASSWORD: rootpassword
-      MYSQL_DATABASE: globexpand
-      MYSQL_USER: globex
-      MYSQL_PASSWORD: globexpass
+    env_file:
+      - .env.docker
     ports:
       - "3307:3306"
     volumes:
@@ -51,8 +39,8 @@ services:
     image: mongo:7.0
     container_name: globexpand-mongo
     restart: always
-    environment:
-      MONGO_INITDB_DATABASE: globexpand
+    env_file:
+      - .env.docker
     ports:
       - "27018:27017"
     volumes:
@@ -62,12 +50,11 @@ services:
     image: maildev/maildev
     container_name: globexpand-maildev
     restart: always
+    env_file:
+      - .env.docker
     ports:
       - "1080:1080"
       - "1025:1025"
-    environment:
-      - MAILDEV_WEB_PORT=1080
-      - MAILDEV_SMTP_PORT=1025
 
 volumes:
   mysql_data:
